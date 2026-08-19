@@ -54,7 +54,9 @@ def reference_run(puzzle: Puzzle) -> Simulation | None:
 
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Check shard-puzzles.")
-    parser.add_argument("puzzle", nargs="?", help="0 (section), 0a, 0b or 0c; default: all available puzzles")
+    parser.add_argument(
+        "puzzle", nargs="?", help="section or puzzle ID, e.g. 0, 0b or 1a; default: all available puzzles"
+    )
     parser.add_argument("--solution", action="store_true", help="check the reference solution instead of your code")
     parser.add_argument("--hint", nargs="?", type=int, const=1, metavar="K", help="show hint K (default 1)")
     parser.add_argument("--scaffold", action="store_true", help="print a fill-in-the-blanks skeleton with checkpoints")

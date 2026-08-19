@@ -10,6 +10,7 @@ from shardpuzzles.errors import WrongResult
 from shardpuzzles.runner import run
 from solutions.p00b_partial_sums import RowParallelLinear
 from solutions.p00c_data_parallel import Linear
+from solutions.p01a_mlp_tp import MLP
 
 PUZZLES = discover()
 
@@ -108,3 +109,31 @@ def test_an_alternative_resharding_algorithm_is_accepted():
     puzzle = PUZZLES["00a"]
     for config in puzzle.spec.configs:
         run(puzzle.spec, Rescale, config)
+
+
+def test_replicated_mlp_cannot_bypass_tensor_parallelism():
+    class ReplicatedMLP(Module):
+        def on_init(self, p):
+            self.W1, self.W2 = p.W1, p.W2
+
+        def forward(self, x):
+            h = (x @ self.W1).expect("b s f")
+            return (gelu(h) @ self.W2).expect("b s d")
+
+    puzzle = PUZZLES["01a"]
+    for config in puzzle.spec.configs:
+        with pytest.raises(WrongResult, match="stored weights.*storage budget"):
+            run(puzzle.spec, ReplicatedMLP, config)
+
+
+def test_mlp_redundant_communication_fails_the_collective_limit():
+    class ExtraCollective(MLP):
+        def forward(self, x):
+            y = super().forward(x)
+            all_gather(self.W1, "f", tp).expect("d f", bytes="2*d*f*(tp-1)/tp")
+            return y
+
+    puzzle = PUZZLES["01a"]
+    for config in puzzle.spec.configs:
+        with pytest.raises(WrongResult, match="forward uses 2 payload collectives; at most 1"):
+            run(puzzle.spec, ExtraCollective, config)
