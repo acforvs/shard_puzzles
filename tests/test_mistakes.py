@@ -39,6 +39,20 @@ def test_forgetting_the_tensor_parallel_input_gradient_all_reduce():
         check("01b", wrong)
 
 
+def test_forgetting_the_sequence_parallel_input_all_gather():
+    wrong = patched_solution(
+        "02a", '        x = all_gather(x, "s", tp).expect("b s d", bytes="2*b*s*d * (tp-1)/tp")\n', ""
+    )
+    with pytest.raises(PuzzleError, match="cannot split two dimensions"):
+        check("02a", wrong)
+
+
+def test_forgetting_the_sequence_parallel_input_gradient_reduce_scatter():
+    wrong = patched_solution("02b", '        dx = reduce_scatter(dx, "s", tp).expect("b s:tp d")\n', "")
+    with pytest.raises(WrongResult, match=r"grad 'x' is .*partial\(tp\)"):
+        check("02b", wrong)
+
+
 def test_using_a_partial_result_as_a_replica():
     wrong = patched_solution("00b", '.expect("b s f", partial=tp)', '.expect("b s f")')
     with pytest.raises(PuzzleError, match="this is a partial sum over tp"):

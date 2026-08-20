@@ -11,6 +11,7 @@ from shardpuzzles.runner import run
 from solutions.p00b_partial_sums import RowParallelLinear
 from solutions.p00c_data_parallel import Linear
 from solutions.p01a_mlp_tp import MLP
+from solutions.p02a_swiglu_tp_sp import SwiGLU
 
 PUZZLES = discover()
 
@@ -136,4 +137,33 @@ def test_mlp_redundant_communication_fails_the_collective_limit():
     puzzle = PUZZLES["01a"]
     for config in puzzle.spec.configs:
         with pytest.raises(WrongResult, match="forward uses 2 payload collectives; at most 1"):
+            run(puzzle.spec, ExtraCollective, config)
+
+
+def test_replicated_swiglu_cannot_bypass_tensor_parallelism():
+    class ReplicatedSwiGLU(Module):
+        def on_init(self, p):
+            self.Wgate, self.Wup, self.Wdown = p.Wgate, p.Wup, p.Wdown
+
+        def forward(self, x):
+            gate = (x @ self.Wgate).expect("b s:tp f")
+            up = (x @ self.Wup).expect("b s:tp f")
+            return ((silu(gate) * up) @ self.Wdown).expect("b s:tp d")
+
+    puzzle = PUZZLES["02a"]
+    for config in puzzle.spec.configs:
+        with pytest.raises(WrongResult, match="stored weights.*storage budget"):
+            run(puzzle.spec, ReplicatedSwiGLU, config)
+
+
+def test_swiglu_redundant_communication_fails_the_collective_limit():
+    class ExtraCollective(SwiGLU):
+        def forward(self, x):
+            y = super().forward(x)
+            all_gather(self.Wgate, "f", tp).expect("d f", bytes="2*d*f*(tp-1)/tp")
+            return y
+
+    puzzle = PUZZLES["02a"]
+    for config in puzzle.spec.configs:
+        with pytest.raises(WrongResult, match="forward uses 3 payload collectives; at most 2"):
             run(puzzle.spec, ExtraCollective, config)

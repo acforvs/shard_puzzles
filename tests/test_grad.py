@@ -8,31 +8,35 @@ from shardpuzzles.errors import PuzzleError
 from shardpuzzles.tensor import to_global
 
 
-def test_gelu_backward_preserves_partial_sums(mesh):
+@pytest.mark.parametrize("backward", [gelu_backward, silu_backward])
+def test_activation_backward_preserves_partial_sums(mesh, backward):
     mesh(b=2, d=3, f=4, tp=2)
     x = mesh.tensor("b d")
     dy = (mesh.tensor("b f:tp") @ mesh.tensor("f:tp d")).expect("b d", partial=tp)
-    partial = gelu_backward(dy, x).expect("b d", partial=tp)
+    partial = backward(dy, x).expect("b d", partial=tp)
     actual = all_reduce(partial, tp).expect("b d")
-    expected = gelu_backward(all_reduce(dy, tp).expect("b d"), x)
+    expected = backward(all_reduce(dy, tp).expect("b d"), x)
     assert torch.allclose(to_global(actual), to_global(expected))
 
 
-def test_gelu_backward_requires_matching_layouts(mesh):
+@pytest.mark.parametrize("backward", [gelu_backward, silu_backward])
+def test_activation_backward_requires_matching_layouts(mesh, backward):
     mesh(b=2, d=3, f=4)
     with pytest.raises(PuzzleError, match="must be laid out like the saved tensor"):
-        gelu_backward(mesh.tensor("b d"), mesh.tensor("b f"))
+        backward(mesh.tensor("b d"), mesh.tensor("b f"))
 
 
-def test_gelu_backward_requires_a_reduced_saved_input(mesh):
+@pytest.mark.parametrize("backward", [gelu_backward, silu_backward])
+def test_activation_backward_requires_a_reduced_saved_input(mesh, backward):
     mesh(b=2, d=3, f=4, tp=2)
     x = (mesh.tensor("b f:tp") @ mesh.tensor("f:tp d")).expect("b d", partial=tp)
     with pytest.raises(PuzzleError, match="unreduced partial sum"):
-        gelu_backward(mesh.tensor("b d"), x)
+        backward(mesh.tensor("b d"), x)
 
 
-def test_gelu_backward_rejects_a_partial_max_gradient(mesh):
+@pytest.mark.parametrize("backward", [gelu_backward, silu_backward])
+def test_activation_backward_rejects_a_partial_max_gradient(mesh, backward):
     mesh(b=2, f=4, tp=2)
     dy = amax(mesh.tensor("b f:tp"), "f", keepdim=True).expect("b 1", partial_max=tp)
     with pytest.raises(PuzzleError, match="partial max"):
-        gelu_backward(dy, mesh.tensor("b 1"))
+        backward(dy, mesh.tensor("b 1"))
