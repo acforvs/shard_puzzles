@@ -27,6 +27,7 @@ class MLP(Module):
         # TODO: compute y with one collective (state each layout, and the collective's bytes)
         h = TODO
         y = TODO
+        self.x, self.h = x, h  # saved for backward
         return y
 
 

@@ -15,6 +15,7 @@ class MLP(Module):
         y = (gelu(h) @ self.W2).expect("b s d", partial=tp)
         y = all_reduce(y, tp).expect("b s d", bytes="2 * 2*b*s*d * (tp-1)/tp")
         # END TODO
+        self.x, self.h = x, h  # saved for backward
         return y
 
 

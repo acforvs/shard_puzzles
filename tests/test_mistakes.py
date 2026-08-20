@@ -33,6 +33,12 @@ def test_forgetting_the_weight_gradient_all_reduce():
         check("00c", wrong)
 
 
+def test_forgetting_the_tensor_parallel_input_gradient_all_reduce():
+    wrong = patched_solution("01b", '        dx = all_reduce(dx, tp).expect("b s d")\n', "")
+    with pytest.raises(WrongResult, match=r"grad 'x' is .*partial\(tp\)"):
+        check("01b", wrong)
+
+
 def test_using_a_partial_result_as_a_replica():
     wrong = patched_solution("00b", '.expect("b s f", partial=tp)', '.expect("b s f")')
     with pytest.raises(PuzzleError, match="this is a partial sum over tp"):

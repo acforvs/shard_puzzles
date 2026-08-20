@@ -12,12 +12,13 @@ uv run check.py 0a
 uv run check.py 0b
 uv run check.py 0c
 uv run check.py 1a
+uv run check.py 1b
 ```
 
 Start with `puzzles/p00a_layouts.py`. Replace the `TODO` blanks and run the checker again.
 The introductory exercises cover replicated and split tensors, partial sums, and a data-parallel
 linear layer with a manual backward pass. `01a` combines two linear projections into a tensor-parallel
-MLP. `uv run check.py` checks all available exercises.
+MLP, and `01b` works backward through it. `uv run check.py` checks all available exercises.
 
 ## Layouts
 
