@@ -167,3 +167,43 @@ def test_swiglu_redundant_communication_fails_the_collective_limit():
     for config in puzzle.spec.configs:
         with pytest.raises(WrongResult, match="forward uses 3 payload collectives; at most 2"):
             run(puzzle.spec, ExtraCollective, config)
+
+
+@pytest.mark.parametrize("pid", ["03a", "04a"])
+def test_attention_full_weight_copies_fail_the_storage_budget(pid):
+    puzzle = PUZZLES[pid]
+    base = puzzle.module_class(solution=True)
+
+    class Cached(base):
+        def on_init(self, p):
+            super().on_init(p)
+            self.originals = p
+
+    for config in puzzle.spec.configs:
+        with pytest.raises(WrongResult, match="stored weights.*storage budget"):
+            run(puzzle.spec, Cached, config)
+
+
+@pytest.mark.parametrize("pid", ["03a", "04a"])
+def test_attention_extra_communication_fails_the_collective_limit(pid):
+    puzzle = PUZZLES[pid]
+    base = puzzle.module_class(solution=True)
+
+    class ExtraCollective(base):
+        def forward(self, x):
+            y = super().forward(x)
+            all_gather(x, "s", tp).expect("b s d")
+            return y
+
+    for config in puzzle.spec.configs:
+        with pytest.raises(WrongResult, match="forward uses 3 payload collectives; at most 2"):
+            run(puzzle.spec, ExtraCollective, config)
+
+
+def test_unfused_attention_cannot_bypass_the_fused_projection_requirement():
+    puzzle = PUZZLES["04a"]
+    unfused = PUZZLES["03a"].module_class(solution=True)
+    for config in puzzle.spec.configs:
+        run(puzzle.spec.replace(max_weight_matmuls=None), unfused, config)
+        with pytest.raises(WrongResult, match="forward multiplies by weights 4 times; at most 2"):
+            run(puzzle.spec, unfused, config)

@@ -53,6 +53,56 @@ def test_forgetting_the_sequence_parallel_input_gradient_reduce_scatter():
         check("02b", wrong)
 
 
+def test_attention_softmax_must_normalize_keys():
+    wrong = patched_solution("03a", 'causal_mask("s s"), dim=-1)', 'causal_mask("s s"), dim=-2)')
+    with pytest.raises(WrongResult, match="right layout but the wrong numbers"):
+        check("03a", wrong)
+
+
+def test_shared_kv_head_gradients_are_summed_instead_of_averaged():
+    wrong = patched_solution(
+        "03b",
+        'dk = repeat_interleave_backward(dk, "h/hkv", dim=1)',
+        'dk = repeat_interleave_backward(dk, "h/hkv", dim=1) / size("h/hkv")',
+    )
+    with pytest.raises(WrongResult, match="right layout but the wrong numbers"):
+        check("03b", wrong)
+
+
+def test_naive_qkv_fusion_has_the_right_shapes_but_wrong_numbers():
+    wrong = patched_solution(
+        "04a",
+        """        wq = p.Wq.view("d hkv (h/hkv)*hd")  # group the query columns by the kv head they use
+        wk = p.Wk.view("d hkv hd")
+        wv = p.Wv.view("d hkv hd")
+        wqkv = shard(cat([wq, wk, wv], dim=2), "d hkv:tp (h/hkv+2)*hd")
+        self.Wqkv = wqkv.view("d (hkv*(h/hkv+2)*hd):tp")""",
+        """        self.Wqkv = shard(cat([p.Wq, p.Wk, p.Wv], dim=1), "d (h*hd+2*hkv*hd):tp")""",
+    )
+    with pytest.raises(WrongResult, match="right layout but the wrong numbers"):
+        check("04a", wrong)
+
+
+def test_unfused_einsum_projections_cannot_bypass_the_fusion_budget():
+    unfused = patched_solution(
+        "03a",
+        """        q = (x @ self.Wq).expect("b s (h*hd):tp").view("b s h:tp hd").transpose(1, 2)
+        k = (x @ self.Wk).expect("b s (hkv*hd):tp").view("b s hkv:tp hd").transpose(1, 2)
+        v = (x @ self.Wv).expect("b s (hkv*hd):tp").view("b s hkv:tp hd").transpose(1, 2)""",
+        """        q = einsum("b s d, d e -> b s e", x, self.Wq).expect("b s (h*hd):tp")
+        q = q.view("b s h:tp hd").transpose(1, 2)
+        k = einsum("b s d, d e -> b s e", x, self.Wk).expect("b s (hkv*hd):tp")
+        k = k.view("b s hkv:tp hd").transpose(1, 2)
+        v = einsum("b s d, d e -> b s e", x, self.Wv).expect("b s (hkv*hd):tp")
+        v = v.view("b s hkv:tp hd").transpose(1, 2)""",
+    )
+    puzzle = PUZZLES["04a"]
+    for config in puzzle.spec.configs:
+        run(puzzle.spec.replace(max_weight_matmuls=None), unfused, config)
+        with pytest.raises(WrongResult, match="forward multiplies by weights 4 times; at most 2"):
+            run(puzzle.spec, unfused, config)
+
+
 def test_using_a_partial_result_as_a_replica():
     wrong = patched_solution("00b", '.expect("b s f", partial=tp)', '.expect("b s f")')
     with pytest.raises(PuzzleError, match="this is a partial sum over tp"):

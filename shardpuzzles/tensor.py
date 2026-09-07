@@ -112,9 +112,6 @@ class ShardedTensor:
     def __matmul__(self, other: ShardedTensor) -> Pending:
         other = require_tensor(other, "@")
         labels = rules.matmul_labels(self.ndim, other.ndim)
-        simulation = current()
-        if other.is_weight and not self.is_weight and simulation.phase == Phase.FORWARD:
-            simulation.weight_matmuls += 1
         return Pending(contract(f"[{self.spec}] @ [{other.spec}]", self, other, *labels), "@")
 
     def elementwise(self, other: ShardedTensor | Scalar, fn: Callable, op: str) -> ShardedTensor:
@@ -178,7 +175,9 @@ class ShardedTensor:
             raise PuzzleError(f"split sizes {' + '.join(format_size(p.size) for p in pieces)} don't add up to {whole}")
         chunks = self.map_shards(lambda x: torch.split(x, [p.local_size() for p in pieces], dim=i))
         return tuple(
-            ShardedTensor(self.layout.with_dim(i, piece), {r: c[k].contiguous() for r, c in chunks.items()})
+            ShardedTensor(
+                self.layout.with_dim(i, piece), {r: c[k].contiguous() for r, c in chunks.items()}, self.is_weight
+            )
             for k, piece in enumerate(pieces)
         )
 
@@ -192,6 +191,9 @@ def contract(
     equation = "".join(letter[x] for x in labels_a) + "," + "".join(letter[x] for x in labels_b)
     equation += "->" + "".join(letter[x] for x in labels_out)
     shards = {r: torch.einsum(equation, a.shards[r], b.shards[r]) for r in a.shards}
+    simulation = current()
+    if (a.is_weight or b.is_weight) and simulation.phase == Phase.FORWARD:
+        simulation.weight_matmuls += 1
     return ShardedTensor(layout, shards, is_weight=False)
 
 

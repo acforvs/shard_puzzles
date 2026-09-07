@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import dataclasses
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from typing import Literal
 
 import sympy as sp
@@ -37,6 +37,37 @@ def shard(t: ShardedTensor, spec: str) -> ShardedTensor:
                 x = x.narrow(i, simulation.coordinate(rank, new.group) * n, n)
         shards[rank] = x.contiguous()
     return t.with_data(shards, dims)
+
+
+def cat(tensors: Sequence[ShardedTensor], dim: DimRef) -> ShardedTensor:
+    """Concatenate along one dim. Along a split dim, every rank concatenates its own slices."""
+    tensors = [require_tensor(t, "cat") for t in tensors]
+    if not tensors:
+        raise PuzzleError("cat: needs at least one tensor")
+    first = tensors[0]
+    i = first.dim_index(dim)
+    for t in tensors[1:]:
+        if t.ndim != first.ndim or not first.layout.with_dim(i, None).matches(t.layout.with_dim(i, None)):
+            raise PuzzleError(f"cat: [{first.spec}] and [{t.spec}] differ outside dim {i}")
+    pieces = [t.dims[i] for t in tensors]
+    group = pieces[0].group
+    if any(d.group != group for d in pieces):
+        raise PuzzleError(f"cat: the pieces are split differently along dim {i}: {', '.join(map(str, pieces))}")
+    joined = Dim(sp.simplify(sp.Add(*(d.size for d in pieces))), group)
+    shards = {r: torch.cat([t.shards[r] for t in tensors], dim=i) for r in first.shards}
+    return ShardedTensor(first.layout.with_dim(i, joined), shards, is_weight=any(t.is_weight for t in tensors))
+
+
+def repeat_interleave(t: ShardedTensor, n: Size, dim: DimRef) -> ShardedTensor:
+    """Repeat each slice along `dim` n times (e.g. kv heads -> query heads)."""
+    t = require_tensor(t, "repeat_interleave")
+    i = t.dim_index(dim)
+    factor = parse_size(n)
+    times = current().evaluate(factor)
+    if times <= 0:
+        raise PuzzleError("repeat_interleave: repeat count must be positive")
+    dims = t.layout.with_dim(i, t.dims[i].resized(t.dims[i].size * factor)).dims
+    return t.with_data(t.map_shards(lambda x: x.repeat_interleave(times, dim=i)), dims)
 
 
 def pointwise(fn: Callable[[torch.Tensor], torch.Tensor], name: str) -> Callable[[ShardedTensor], ShardedTensor]:
@@ -97,6 +128,24 @@ def amax(t: ShardedTensor, dim: DimRef, keepdim: bool = False) -> Pending:
     t = require_tensor(t, "amax")
     rules.require_reduced(t.layout, "amax")
     return reduce_dim(t, dim, keepdim, "max")
+
+
+def causal_mask(spec: str) -> ShardedTensor:
+    """Additive [queries keys] mask: 0 where key position <= query position, -inf otherwise.
+
+    The query dim may be split; each rank gets its contiguous chunk of global positions.
+    """
+    dims = parse_dims(spec)
+    if len(dims) != 2 or dims[1].group:
+        raise PuzzleError("causal_mask takes [queries keys] with whole keys: 's s' or 's:tp s'")
+    simulation = current()
+    mask = torch.full([simulation.evaluate(d.size) for d in dims], float("-inf"), dtype=torch.float64).triu(1)
+    rows = dims[0].local_size()
+    shards = {}
+    for rank in simulation.ranks:
+        offset = simulation.coordinate(rank, dims[0].group) * rows if dims[0].group else 0
+        shards[rank] = mask[offset : offset + rows].clone()
+    return ShardedTensor(Layout(dims), shards)
 
 
 def full(spec: str, value: float) -> ShardedTensor:
