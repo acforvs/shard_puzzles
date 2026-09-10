@@ -13,7 +13,7 @@ import torch.nn.functional as F
 from . import rules
 from .errors import PuzzleError
 from .layout import Dim, DimRef, Layout, Size, parse_dims, parse_size, same_size
-from .simulation import current
+from .simulation import Rank, current
 from .tensor import Pending, ShardedTensor, contract, require_tensor
 
 
@@ -128,6 +128,69 @@ def amax(t: ShardedTensor, dim: DimRef, keepdim: bool = False) -> Pending:
     t = require_tensor(t, "amax")
     rules.require_reduced(t.layout, "amax")
     return reduce_dim(t, dim, keepdim, "max")
+
+
+def _require_ids(ids: ShardedTensor, op: str) -> ShardedTensor:
+    ids = require_tensor(ids, op)
+    if not ids.is_integer:
+        raise PuzzleError(f"{op}: ids must be an integer tensor")
+    rules.require_reduced(ids.layout, op)
+    return ids
+
+
+def _check_ids_range(ids: ShardedTensor, high: int, op: str) -> None:
+    if high <= 0:
+        raise PuzzleError(f"{op}: the indexed dimension must have positive size")
+    if any(bool(((x < 0) | (x >= high)).any()) for x in ids.shards.values()):
+        raise PuzzleError(f"{op}: ids must be in [0, {high})")
+
+
+def _owned_rows(ids: torch.Tensor, rows: int, offset: int) -> tuple[torch.Tensor, torch.Tensor]:
+    """Local indices and ownership mask for this rank's contiguous row range."""
+    local = ids - offset
+    return local.clamp(0, rows - 1), (local >= 0) & (local < rows)
+
+
+def _row_offset(dim: Dim, rows: int, rank: Rank) -> int:
+    return current().coordinate(rank, dim.split_over) * rows if dim.split_over else 0
+
+
+def take(t: ShardedTensor, ids: ShardedTensor, dim: DimRef = -1) -> Pending:
+    """Pick one entry per row. A split indexed dim leaves zero on ranks that don't own the id.
+
+    The result is a partial sum over that dim's group, requiring a reduction.
+    """
+    t, ids = require_tensor(t, "take"), _require_ids(ids, "take")
+    rules.require_no_partial_max(t.layout, "take")
+    i = t.dim_index(dim)
+    rest = t.layout.with_dim(i, None)
+    if not rest.same_dims(ids.layout):
+        raise PuzzleError(f"take: ids [{ids.spec}] must be laid out like [{t.spec}] without dim {i}")
+    d, n = t.dims[i], t.local_shape[i]
+    _check_ids_range(ids, current().evaluate(d.size), "take")
+    shards = {}
+    for rank, x in t.shards.items():
+        local, owned = _owned_rows(ids.shards[rank], n, _row_offset(d, n, rank))
+        picked = x.movedim(i, -1).gather(-1, local.unsqueeze(-1)).squeeze(-1)
+        shards[rank] = torch.where(owned, picked, 0)
+    if d.split_over:
+        rest = dataclasses.replace(rest, partial=t.partial | {d.split_over})
+    return Pending(ShardedTensor(rest, shards, is_weight=False), "take")
+
+
+def embedding(ids: ShardedTensor, table: ShardedTensor) -> Pending:
+    """Look up rows locally; unowned ids contribute zeros and leave a partial sum."""
+    ids, table = _require_ids(ids, "embedding"), require_tensor(table, "embedding")
+    if table.ndim != 2 or table.partial or table.partial_max:
+        raise PuzzleError(f"embedding: the table must be a reduced 2-D [vocab dim] tensor, got [{table.spec}]")
+    vocab, rows = table.dims[0], table.local_shape[0]
+    _check_ids_range(ids, current().evaluate(vocab.size), "embedding")
+    layout = Layout(ids.dims + table.dims[1:], frozenset({vocab.split_over} if vocab.split_over else ()))
+    shards = {}
+    for rank in current().ranks:
+        local, owned = _owned_rows(ids.shards[rank], rows, _row_offset(vocab, rows, rank))
+        shards[rank] = torch.where(owned.unsqueeze(-1), table.shards[rank][local], 0)
+    return Pending(ShardedTensor(layout, shards, is_weight=False), "embedding")
 
 
 def causal_mask(spec: str) -> ShardedTensor:

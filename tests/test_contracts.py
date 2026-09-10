@@ -12,6 +12,7 @@ from solutions.p00b_partial_sums import RowParallelLinear
 from solutions.p00c_data_parallel import Linear
 from solutions.p01a_mlp_tp import MLP
 from solutions.p02a_swiglu_tp_sp import SwiGLU
+from solutions.p05a_vocab_parallel_embedding import VocabParallelEmbedding
 
 PUZZLES = discover()
 
@@ -207,3 +208,50 @@ def test_unfused_attention_cannot_bypass_the_fused_projection_requirement():
         run(puzzle.spec.replace(max_weight_matmuls=None), unfused, config)
         with pytest.raises(WrongResult, match="forward multiplies by weights 4 times; at most 2"):
             run(puzzle.spec, unfused, config)
+
+
+def test_replicated_embedding_cannot_bypass_vocab_parallelism():
+    class ReplicatedEmbedding(Module):
+        def on_init(self, p):
+            self.E = p.E
+
+        def forward(self, ids):
+            return shard(embedding(ids, self.E).expect("b s d"), "b s:tp d")
+
+    puzzle = PUZZLES["05a"]
+    for config in puzzle.spec.configs:
+        with pytest.raises(WrongResult, match="stored weights.*storage budget"):
+            run(puzzle.spec, ReplicatedEmbedding, config)
+
+
+def test_embedding_all_reduce_then_slice_exceeds_the_byte_budget():
+    class ReduceThenSlice(VocabParallelEmbedding):
+        def forward(self, ids):
+            local = embedding(ids, self.E).expect("b s d", partial=tp)
+            return shard(all_reduce(local, tp).expect("b s d"), "b s:tp d")
+
+    puzzle = PUZZLES["05a"]
+    for config in puzzle.spec.configs:
+        run(puzzle.spec.replace(max_comm_bytes=None), ReduceThenSlice, config)
+        with pytest.raises(WrongResult, match="moved .*the budget is"):
+            run(puzzle.spec, ReduceThenSlice, config)
+
+
+def test_gathering_full_logits_exceeds_the_cross_entropy_byte_budget():
+    class GatherLogits(Module):
+        def on_init(self, p):
+            self.W = shard(p.W, "d v:tp")
+
+        def forward(self, x, targets):
+            logits = (x @ self.W).expect("b s v:tp")
+            logits = all_gather(logits, "v", tp).expect("b s v")
+            maximum = amax(logits, -1, keepdim=True).expect("b s 1")
+            sumexp = sum(exp(logits - maximum), -1, keepdim=True).expect("b s 1")
+            target = take(logits, targets).expect("b s")
+            return (log(sumexp) + maximum).view("b s") - target
+
+    puzzle = PUZZLES["06a"]
+    for config in puzzle.spec.configs:
+        run(puzzle.spec.replace(max_comm_bytes=None), GatherLogits, config)
+        with pytest.raises(WrongResult, match="moved .*the budget is"):
+            run(puzzle.spec, GatherLogits, config)

@@ -2,12 +2,20 @@
 
 from .collectives import all_gather, all_reduce, all_to_all, reduce_scatter
 from .definition import Ids, Module, Spec, Weight
-from .grad import gelu_backward, repeat_interleave_backward, silu_backward, softmax_backward
+from .grad import (
+    embedding_backward,
+    gelu_backward,
+    one_hot,
+    repeat_interleave_backward,
+    silu_backward,
+    softmax_backward,
+)
 from .ops import (
     amax,
     cat,
     causal_mask,
     einsum,
+    embedding,
     exp,
     full,
     gelu,
@@ -20,6 +28,7 @@ from .ops import (
     size,
     softmax,
     sum,
+    take,
 )
 from .show import show
 from .simulation import dp, tp
@@ -31,4 +40,5 @@ __all__ = [
     "einsum", "gelu", "silu", "relu", "sigmoid", "exp", "log", "softmax", "sum", "amax",
     "size", "full", "show", "cat", "repeat_interleave", "causal_mask",
     "gelu_backward", "silu_backward", "softmax_backward", "repeat_interleave_backward",
+    "embedding", "embedding_backward", "take", "one_hot",
 ]  # fmt: skip

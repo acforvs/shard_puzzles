@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import dataclasses
 from collections.abc import Callable
 
 import torch
@@ -9,9 +10,10 @@ import torch.nn.functional as F
 
 from . import rules
 from .errors import PuzzleError
-from .layout import DimRef, Size, parse_size
+from .layout import DimRef, Layout, Size, parse_dims, parse_size
+from .ops import _check_ids_range, _owned_rows, _require_ids, _row_offset
 from .simulation import current
-from .tensor import ShardedTensor, require_tensor
+from .tensor import Pending, ShardedTensor, require_tensor
 
 
 def gelu_backward(dy: ShardedTensor, x: ShardedTensor) -> ShardedTensor:
@@ -78,3 +80,44 @@ def repeat_interleave_backward(t: ShardedTensor, n: Size, dim: DimRef) -> Sharde
     count = result_dim.local_size()
     dims = t.layout.with_dim(i, result_dim).dims
     return t.with_data(t.map_shards(lambda x: x.unflatten(i, (count, times)).sum(i + 1)), dims)
+
+
+def one_hot(ids: ShardedTensor, spec: str) -> ShardedTensor:
+    """One-hot rows; with a split vocab dim, each rank fills only the columns it owns."""
+    ids = _require_ids(ids, "one_hot")
+    dims = parse_dims(spec)
+    if len(dims) != 1:
+        raise PuzzleError("one_hot: specify one vocabulary dimension, e.g. 'v:tp'")
+    (dim,) = dims
+    n = dim.local_size()
+    _check_ids_range(ids, current().evaluate(dim.size), "one_hot")
+    layout = Layout(ids.dims + dims)
+    shards = {}
+    for rank in current().ranks:
+        local, owned = _owned_rows(ids.shards[rank], n, _row_offset(dim, n, rank))
+        shards[rank] = F.one_hot(local, n).to(torch.float64) * owned.unsqueeze(-1)
+    return ShardedTensor(layout, shards, is_weight=False)
+
+
+def embedding_backward(ids: ShardedTensor, dy: ShardedTensor, spec: str) -> Pending:
+    """Sum token gradients into the table rows this rank owns, including repeated ids.
+
+    Split token dimensions and incoming partial gradients leave partial weight gradients.
+    """
+    ids, dy = _require_ids(ids, "embedding_backward"), require_tensor(dy, "embedding_backward")
+    rules.require_no_partial_max(dy.layout, "embedding_backward")
+    table = Layout(parse_dims(spec))
+    if table.ndim != 2:
+        raise PuzzleError("embedding_backward: specify a 2-D table layout, e.g. 'v:tp d'")
+    if not Layout(ids.dims + table.dims[1:]).same_dims(dy.layout):
+        raise PuzzleError(f"embedding_backward: dy [{dy.spec}] must be laid out like the lookup's output")
+    rows, width = table.local_shape()
+    _check_ids_range(ids, current().evaluate(table.dims[0].size), "embedding_backward")
+    partial = dy.partial | {d.split_over for d in ids.dims if d.split_over}
+    layout = dataclasses.replace(table, partial=frozenset(partial))
+    shards = {}
+    for rank in current().ranks:
+        local, owned = _owned_rows(ids.shards[rank].reshape(-1), rows, _row_offset(table.dims[0], rows, rank))
+        grad = torch.zeros(rows, width, dtype=torch.float64)
+        shards[rank] = grad.index_add(0, local[owned], dy.shards[rank].reshape(-1, width)[owned])
+    return Pending(ShardedTensor(layout, shards, is_weight=False), "embedding_backward")

@@ -19,6 +19,10 @@ uv run check.py 3a
 uv run check.py 3b
 uv run check.py 4a
 uv run check.py 4b
+uv run check.py 5a
+uv run check.py 5b
+uv run check.py 6a
+uv run check.py 6b
 ```
 
 Start with `puzzles/p00a_layouts.py`. Replace the `TODO` blanks and run the checker again.
@@ -28,6 +32,8 @@ MLP, and `01b` works backward through it. `02a` and `02b` combine tensor and seq
 in a SwiGLU MLP, covering both forward and backward passes.
 `03a` and `03b` apply those layouts to causal grouped-query attention; `04a` and `04b` fuse
 the QKV projections and work through the corresponding gradients.
+`05a` and `05b` split an embedding table by vocabulary rows; `06a` and `06b` compute
+cross-entropy and its gradients while keeping the vocabulary logits split across ranks.
 `uv run check.py` checks all available exercises.
 
 ## Layouts

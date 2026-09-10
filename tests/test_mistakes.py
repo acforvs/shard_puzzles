@@ -103,6 +103,30 @@ def test_unfused_einsum_projections_cannot_bypass_the_fusion_budget():
             run(puzzle.spec, unfused, config)
 
 
+def test_embedding_backward_needs_all_tokens_gradient_rows():
+    wrong = patched_solution("05b", '        dy = all_gather(dy, "s", tp).expect("b s d")\n', "")
+    with pytest.raises(PuzzleError, match="must be laid out like the lookup's output"):
+        check("05b", wrong)
+
+
+def test_cross_entropy_maximum_needs_a_max_reduction():
+    wrong = patched_solution("06a", 'all_reduce(m, tp, op="max")', "all_reduce(m, tp)")
+    with pytest.raises(PuzzleError, match="use op='max'"):
+        check("06a", wrong)
+
+
+def test_cross_entropy_target_logit_needs_a_reduction():
+    wrong = patched_solution("06a", '        target = all_reduce(target, tp).expect("b s")\n', "")
+    with pytest.raises(PuzzleError, match="partial-ness differs"):
+        check("06a", wrong)
+
+
+def test_cross_entropy_input_gradient_needs_an_all_reduce():
+    wrong = patched_solution("06b", '        dx = all_reduce(dx, tp).expect("b s d")\n', "")
+    with pytest.raises(WrongResult, match=r"grad 'x' is .*partial\(tp\)"):
+        check("06b", wrong)
+
+
 def test_using_a_partial_result_as_a_replica():
     wrong = patched_solution("00b", '.expect("b s f", partial=tp)', '.expect("b s f")')
     with pytest.raises(PuzzleError, match="this is a partial sum over tp"):
