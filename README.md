@@ -23,6 +23,10 @@ uv run check.py 5a
 uv run check.py 5b
 uv run check.py 6a
 uv run check.py 6b
+uv run check.py 7a
+uv run check.py 7b
+uv run check.py 8a
+uv run check.py 8b
 ```
 
 Start with `puzzles/p00a_layouts.py`. Replace the `TODO` blanks and run the checker again.
@@ -34,6 +38,8 @@ in a SwiGLU MLP, covering both forward and backward passes.
 the QKV projections and work through the corresponding gradients.
 `05a` and `05b` split an embedding table by vocabulary rows; `06a` and `06b` compute
 cross-entropy and its gradients while keeping the vocabulary logits split across ranks.
+`07a` and `07b` gather sharded weights for FSDP and scatter their gradients; `08a` and `08b`
+combine FSDP with tensor parallelism on a two-dimensional mesh.
 `uv run check.py` checks all available exercises.
 
 ## Layouts

@@ -255,3 +255,52 @@ def test_gathering_full_logits_exceeds_the_cross_entropy_byte_budget():
         run(puzzle.spec.replace(max_comm_bytes=None), GatherLogits, config)
         with pytest.raises(WrongResult, match="moved .*the budget is"):
             run(puzzle.spec, GatherLogits, config)
+
+
+@pytest.mark.parametrize("pid", ["07a", "08a"])
+def test_fsdp_requires_sharded_weight_storage(pid):
+    class Replicated(Module):
+        def on_init(self, p):
+            self.W1, self.W2 = p.W1, p.W2
+
+    puzzle = PUZZLES[pid]
+    for config in puzzle.spec.configs:
+        with pytest.raises(WrongResult, match="stored weights.*storage budget"):
+            run(puzzle.spec, Replicated, config)
+
+
+@pytest.mark.parametrize("pid,limit", [("07a", 2), ("08a", 3)])
+def test_fsdp_extra_weight_gathers_fail_the_collective_limit(pid, limit):
+    puzzle = PUZZLES[pid]
+    base = puzzle.module_class(solution=True)
+
+    class ExtraGather(base):
+        W1: ShardedTensor
+
+        def forward(self, x):
+            y = super().forward(x)
+            all_gather(self.W1, "d", dp).expect(
+                "d f:tp" if pid == "08a" else "d f", bytes="2*d*f/tp*(dp-1)/dp" if pid == "08a" else "2*d*f*(dp-1)/dp"
+            )
+            return y
+
+    for config in puzzle.spec.configs:
+        with pytest.raises(WrongResult, match=f"forward uses {limit + 1} payload collectives; at most {limit}"):
+            run(puzzle.spec, ExtraGather, config)
+
+
+def test_fsdp_forward_accepts_other_weight_shard_dimensions():
+    class ColumnShards(Module):
+        def on_init(self, p):
+            self.W1 = shard(p.W1, "d f:dp")
+            self.W2 = shard(p.W2, "f d:dp")
+
+        def forward(self, x):
+            w1 = all_gather(self.W1, "f", dp).expect("d f", bytes="2*d*f*(dp-1)/dp")
+            h = (x @ w1).expect("b:dp s f")
+            w2 = all_gather(self.W2, "d", dp).expect("f d", bytes="2*f*d*(dp-1)/dp")
+            return (gelu(h) @ w2).expect("b:dp s d")
+
+    puzzle = PUZZLES["07a"]
+    for config in puzzle.spec.configs:
+        run(puzzle.spec, ColumnShards, config)

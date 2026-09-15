@@ -127,6 +127,58 @@ def test_cross_entropy_input_gradient_needs_an_all_reduce():
         check("06b", wrong)
 
 
+@pytest.mark.parametrize("pid", ["07a", "08a", "07b", "08b"])
+def test_fsdp_cannot_keep_gathered_weights_between_passes(pid):
+    weight = "W2" if pid.endswith("b") else "W1"
+    wrong = patched_solution(pid, f"{weight} = all_gather(", f"self.cached = {weight} = all_gather(")
+    phase = "backward" if pid.endswith("b") else "forward"
+    puzzle = PUZZLES[pid]
+    for config in puzzle.spec.configs:
+        with pytest.raises(WrongResult, match=f"after {phase}, stored weights"):
+            run(puzzle.spec, wrong, config)
+
+
+@pytest.mark.parametrize(
+    "pid,old,new,message",
+    [
+        (
+            "07b",
+            '        dW1 = reduce_scatter(dW1, "d", dp).expect("d:dp f", bytes="2*d*f * (dp-1)/dp")\n',
+            '        dW1 = shard(dW1, "d:dp f")\n',
+            "reduce_scatter it instead",
+        ),
+        (
+            "08a",
+            'all_gather(self.W1, "d", dp)',
+            'all_gather(self.W1, "d", tp)',
+            "isn't split over tp",
+        ),
+        (
+            "08b",
+            'reduce_scatter(dW2, "d", dp)',
+            'reduce_scatter(dW2, "d", tp)',
+            "isn't a partial sum over tp",
+        ),
+        (
+            "08b",
+            '        dx = all_reduce(dx, tp).expect("b:dp s d", bytes="4*b/dp*s*d * (tp-1)/tp")\n',
+            "",
+            r"grad 'x' is .*partial\(tp\)",
+        ),
+        (
+            "08a",
+            '"2*d*f/tp * (dp-1)/dp"',
+            '"2*d*f * (dp-1)/dp"',
+            r"incorrect byte count for all_gather\(dp\)",
+        ),
+    ],
+)
+def test_fsdp_requires_the_correct_reduction_group_and_volume(pid, old, new, message):
+    wrong = patched_solution(pid, old, new)
+    with pytest.raises(PuzzleError, match=message):
+        check(pid, wrong)
+
+
 def test_using_a_partial_result_as_a_replica():
     wrong = patched_solution("00b", '.expect("b s f", partial=tp)', '.expect("b s f")')
     with pytest.raises(PuzzleError, match="this is a partial sum over tp"):
