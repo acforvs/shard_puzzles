@@ -27,6 +27,10 @@ uv run check.py 7a
 uv run check.py 7b
 uv run check.py 8a
 uv run check.py 8b
+uv run check.py 9a
+uv run check.py 9b
+uv run check.py 10a
+uv run check.py 10b
 ```
 
 Start with `puzzles/p00a_layouts.py`. Replace the `TODO` blanks and run the checker again.
@@ -40,6 +44,8 @@ the QKV projections and work through the corresponding gradients.
 cross-entropy and its gradients while keeping the vocabulary logits split across ranks.
 `07a` and `07b` gather sharded weights for FSDP and scatter their gradients; `08a` and `08b`
 combine FSDP with tensor parallelism on a two-dimensional mesh.
+`09a` and `09b` route tokens to experts with expert parallelism; `10a` and `10b` add
+selection bias, sigmoid routing weights, and a shared expert.
 `uv run check.py` checks all available exercises.
 
 ## Layouts
@@ -68,7 +74,7 @@ The result of a matmul, `einsum`, reduction or collective is pending until you s
 result = operation(...).expect("b s d")
 ```
 
-For a partial sum, add `partial=tp` or `partial=dp`. For a collective, the exercise may also require
+For a partial sum, add `partial=tp`, `partial=dp`, or `partial=ep`. For a collective, the exercise may also require
 `bytes="..."`. The engine derives the layout independently and checks your statement. Elementwise
 operations preserve the layout and do not need another `.expect(...)`.
 

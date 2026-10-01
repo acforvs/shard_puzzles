@@ -179,6 +179,47 @@ def test_fsdp_requires_the_correct_reduction_group_and_volume(pid, old, new, mes
         check(pid, wrong)
 
 
+@pytest.mark.parametrize(
+    "old,new",
+    [
+        ("gather(s, expert_ids, dim=-1)", "gather(s + self.bias, expert_ids, dim=-1)"),
+        ('topk(s + self.bias, "k", dim=-1)', 'topk(s, "k", dim=-1)'),
+    ],
+)
+def test_shared_expert_bias_only_changes_selection(old, new):
+    wrong = patched_solution("10a", old, new)
+    with pytest.raises(WrongResult, match="right layout but the wrong numbers"):
+        check("10a", wrong)
+
+
+def test_moe_router_weight_gradient_needs_a_reduction():
+    wrong = patched_solution(
+        "09b",
+        'all_reduce(einsum("t d, t e -> d e", self.x, dlogits).expect("d E", partial=ep), ep).expect("d E")',
+        'einsum("t d, t e -> d e", self.x, dlogits).expect("d E", partial=ep)',
+    )
+    with pytest.raises(WrongResult, match=r"grad 'Wr' is .*partial\(ep\)"):
+        check("09b", wrong)
+
+
+def test_shared_expert_weight_gradient_needs_a_reduction():
+    wrong = patched_solution(
+        "10b",
+        'all_reduce(einsum("t d, t f -> d f", self.x, dhs).expect("d fs", partial=ep), ep).expect("d fs")',
+        'einsum("t d, t f -> d f", self.x, dhs).expect("d fs", partial=ep)',
+    )
+    with pytest.raises(WrongResult, match=r"grad 'Ws1' is .*partial\(ep\)"):
+        check("10b", wrong)
+
+
+def test_moe_combine_requires_the_return_all_to_all():
+    wrong = patched_solution(
+        "09a", '        y = all_to_all(y, "E", "C", ep).expect("E C:ep d", bytes="2*E*C/ep*d * (ep-1)/ep")\n', ""
+    )
+    with pytest.raises(PuzzleError, match="combine expects"):
+        check("09a", wrong)
+
+
 def test_using_a_partial_result_as_a_replica():
     wrong = patched_solution("00b", '.expect("b s f", partial=tp)', '.expect("b s f")')
     with pytest.raises(PuzzleError, match="this is a partial sum over tp"):

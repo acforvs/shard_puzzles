@@ -98,6 +98,24 @@ def softmax(t: ShardedTensor, dim: DimRef) -> ShardedTensor:
     return t.with_data(t.map_shards(lambda x: torch.softmax(x, dim=i)))
 
 
+def topk(t: ShardedTensor, k: Size, dim: DimRef = -1) -> tuple[ShardedTensor, ShardedTensor]:
+    """Values and indices of the k largest entries along a whole dimension."""
+    t = require_tensor(t, "topk")
+    rules.require_reduced(t.layout, "topk")
+    i = t.dim_index(dim)
+    if t.dims[i].group:
+        raise PuzzleError(f"topk over {t.dims[i]}: each rank only sees some of the candidates")
+    size_k = parse_size(k)
+    count = current().evaluate(size_k)
+    if not 0 <= count <= t.local_shape[i]:
+        raise PuzzleError(f"topk: k must be between 0 and {t.local_shape[i]}, got {count}")
+    layout = t.layout.with_dim(i, Dim(size_k))
+    values, indices = {}, {}
+    for rank, x in t.shards.items():
+        values[rank], indices[rank] = torch.topk(x, count, dim=i)
+    return ShardedTensor(layout, values, t.is_weight), ShardedTensor(layout, indices, is_weight=False)
+
+
 def reduce_dim(t: ShardedTensor, dim: DimRef, keepdim: bool, kind: Literal["sum", "max"]) -> Pending:
     """Sum or max over one dim. Over a split dim each rank only reduced its own slice: a partial result."""
     i = t.dim_index(dim)
@@ -176,6 +194,21 @@ def take(t: ShardedTensor, ids: ShardedTensor, dim: DimRef = -1) -> Pending:
     if d.split_over:
         rest = dataclasses.replace(rest, partial=t.partial | {d.split_over})
     return Pending(ShardedTensor(rest, shards, is_weight=False), "take")
+
+
+def gather(t: ShardedTensor, ids: ShardedTensor, dim: DimRef = -1) -> ShardedTensor:
+    """Select entries along a whole dimension, like torch.gather, retaining the choice axis."""
+    t, ids = require_tensor(t, "gather"), _require_ids(ids, "gather")
+    rules.require_no_partial_max(t.layout, "gather")
+    i = t.dim_index(dim)
+    if t.dims[i].group:
+        raise PuzzleError(f"gather along {t.dims[i]}: that dim is split; take() picks one index per row")
+    if t.ndim != ids.ndim or not t.layout.with_dim(i, None).same_dims(ids.layout.with_dim(i, None)):
+        raise PuzzleError(f"gather: ids [{ids.spec}] must be laid out like [{t.spec}] except along dim {i}")
+    _check_ids_range(ids, t.local_shape[i], "gather")
+    return t.with_data(
+        {r: x.gather(i, ids.shards[r]) for r, x in t.shards.items()}, t.layout.with_dim(i, ids.dims[i]).dims
+    )
 
 
 def embedding(ids: ShardedTensor, table: ShardedTensor) -> Pending:

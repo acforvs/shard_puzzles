@@ -8,7 +8,7 @@ from shardpuzzles.errors import PuzzleError
 from shardpuzzles.tensor import to_global
 
 
-@pytest.mark.parametrize("backward", [gelu_backward, silu_backward])
+@pytest.mark.parametrize("backward", [gelu_backward, silu_backward, sigmoid_backward])
 def test_activation_backward_preserves_partial_sums(mesh, backward):
     mesh(b=2, d=3, f=4, tp=2)
     x = mesh.tensor("b d")
@@ -19,14 +19,14 @@ def test_activation_backward_preserves_partial_sums(mesh, backward):
     assert torch.allclose(to_global(actual), to_global(expected))
 
 
-@pytest.mark.parametrize("backward", [gelu_backward, silu_backward])
+@pytest.mark.parametrize("backward", [gelu_backward, silu_backward, sigmoid_backward])
 def test_activation_backward_requires_matching_layouts(mesh, backward):
     mesh(b=2, d=3, f=4)
     with pytest.raises(PuzzleError, match="must be laid out like the saved tensor"):
         backward(mesh.tensor("b d"), mesh.tensor("b f"))
 
 
-@pytest.mark.parametrize("backward", [gelu_backward, silu_backward])
+@pytest.mark.parametrize("backward", [gelu_backward, silu_backward, sigmoid_backward])
 def test_activation_backward_requires_a_reduced_saved_input(mesh, backward):
     mesh(b=2, d=3, f=4, tp=2)
     x = (mesh.tensor("b f:tp") @ mesh.tensor("f:tp d")).expect("b d", partial=tp)
@@ -34,7 +34,7 @@ def test_activation_backward_requires_a_reduced_saved_input(mesh, backward):
         backward(mesh.tensor("b d"), x)
 
 
-@pytest.mark.parametrize("backward", [gelu_backward, silu_backward])
+@pytest.mark.parametrize("backward", [gelu_backward, silu_backward, sigmoid_backward])
 def test_activation_backward_rejects_a_partial_max_gradient(mesh, backward):
     mesh(b=2, f=4, tp=2)
     dy = amax(mesh.tensor("b f:tp"), "f", keepdim=True).expect("b 1", partial_max=tp)

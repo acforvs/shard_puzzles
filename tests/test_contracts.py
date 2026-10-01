@@ -304,3 +304,40 @@ def test_fsdp_forward_accepts_other_weight_shard_dimensions():
     puzzle = PUZZLES["07a"]
     for config in puzzle.spec.configs:
         run(puzzle.spec, ColumnShards, config)
+
+
+@pytest.mark.parametrize("pid", ["09a", "10a"])
+def test_replicated_experts_fail_the_storage_budget(pid):
+    puzzle = PUZZLES[pid]
+    base = puzzle.module_class(solution=True)
+
+    class ReplicatedExperts(base):
+        def on_init(self, p):
+            super().on_init(p)
+            self.W1, self.W2 = p.W1, p.W2
+
+    for config in puzzle.spec.configs:
+        if config["ep"] == 1:
+            continue  # a single expert rank already stores every expert
+        with pytest.raises(WrongResult, match="stored weights.*storage budget"):
+            run(puzzle.spec, ReplicatedExperts, config)
+
+
+@pytest.mark.parametrize("pid", ["09a", "10a"])
+def test_moe_extra_communication_fails_the_collective_limit(pid):
+    puzzle = PUZZLES[pid]
+    base = puzzle.module_class(solution=True)
+
+    class ExtraCollective(base):
+        W1: ShardedTensor
+
+        def forward(self, x):
+            result = super().forward(x)
+            all_gather(self.W1, "E", ep).expect("E d f", bytes="2*E*d*f*(ep-1)/ep")
+            return result
+
+    for config in puzzle.spec.configs:
+        if config["ep"] == 1:
+            continue  # no payload leaves a singleton group
+        with pytest.raises(WrongResult, match="forward uses 3 payload collectives; at most 2"):
+            run(puzzle.spec, ExtraCollective, config)

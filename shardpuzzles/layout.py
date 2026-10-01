@@ -31,7 +31,7 @@ GroupsRef = GroupRef | Iterable[GroupRef] | None  # partial=tp, partial=[tp, dp]
 
 
 def parse_size(text: Size, allow_group_sizes: bool = False) -> sp.Expr:
-    """'h*hd' -> a sympy expression over the puzzle's dim names (and tp/dp if allowed)."""
+    """'h*hd' -> a sympy expression over the puzzle's dim names (and mesh sizes if allowed)."""
     if isinstance(text, int):
         return sp.Integer(text)
     if "?" in text:

@@ -21,14 +21,14 @@ from .errors import Location, PuzzleError, caller_location
 if TYPE_CHECKING:
     from .layout import Layout
 
-GROUP_NAMES = ("tp", "dp")
+GROUP_NAMES = ("tp", "dp", "ep")
 BYTES_PER_ELEMENT = 2  # communication volumes assume bf16
 
 Rank = tuple[int, ...]  # one coordinate per mesh group of the puzzle, in GROUP_NAMES order
 
 
 class Group:
-    """A mesh axis that collectives run over: tp or dp."""
+    """A mesh axis that collectives run over: tp, dp or ep."""
 
     def __init__(self, name: str):
         self.name = name
@@ -41,7 +41,7 @@ class Group:
         return self.name
 
 
-tp, dp = (Group(name) for name in GROUP_NAMES)
+tp, dp, ep = (Group(name) for name in GROUP_NAMES)
 
 GroupRef = Group | str
 
@@ -51,7 +51,7 @@ def group_name(group: GroupRef) -> str:
         return group.name
     if isinstance(group, str) and group in GROUP_NAMES:
         return group
-    raise PuzzleError(f"expected a mesh group (tp or dp), got {group!r}")
+    raise PuzzleError(f"expected a mesh group (tp, dp or ep), got {group!r}")
 
 
 def size_symbol(name: str) -> sp.Symbol:

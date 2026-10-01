@@ -10,7 +10,7 @@ import torch.nn.functional as F
 
 from . import rules
 from .errors import PuzzleError
-from .layout import DimRef, Layout, Size, parse_dims, parse_size
+from .layout import Dim, DimRef, Layout, Size, parse_dims, parse_size
 from .ops import _check_ids_range, _owned_rows, _require_ids, _row_offset
 from .simulation import current
 from .tensor import Pending, ShardedTensor, require_tensor
@@ -32,6 +32,12 @@ def silu_backward(dy: ShardedTensor, x: ShardedTensor) -> ShardedTensor:
     stay partial over the same groups.
     """
     return _activation_backward(dy, x, F.silu, "silu_backward")
+
+
+def sigmoid_backward(dy: ShardedTensor, s: ShardedTensor) -> ShardedTensor:
+    """Gradient through sigmoid given its saved output s; incoming partial sums stay partial."""
+    dy, s = _gradient_and_saved(dy, s, "sigmoid_backward")
+    return dy.with_data({r: dy.shards[r] * s.shards[r] * (1 - s.shards[r]) for r in dy.shards})
 
 
 def _activation_backward(
@@ -121,3 +127,20 @@ def embedding_backward(ids: ShardedTensor, dy: ShardedTensor, spec: str) -> Pend
         grad = torch.zeros(rows, width, dtype=torch.float64)
         shards[rank] = grad.index_add(0, local[owned], dy.shards[rank].reshape(-1, width)[owned])
     return Pending(ShardedTensor(layout, shards, is_weight=False), "embedding_backward")
+
+
+def scatter(src: ShardedTensor, ids: ShardedTensor, dim: DimRef, size: Size) -> ShardedTensor:
+    """Add gathered/top-k gradients back into their original positions, summing repeated indices."""
+    src, ids = require_tensor(src, "scatter"), _require_ids(ids, "scatter")
+    rules.require_no_partial_max(src.layout, "scatter")
+    i = src.dim_index(dim)
+    if not ids.layout.same_dims(src.layout):
+        raise PuzzleError("scatter: ids must be laid out like src")
+    output_dim = Dim(parse_size(size))
+    _check_ids_range(ids, output_dim.local_size(), "scatter")
+    layout = src.layout.with_dim(i, output_dim)
+    if src.dims[i].split_over:
+        layout = dataclasses.replace(layout, partial=src.partial | {src.dims[i].split_over})
+    shape = layout.local_shape()
+    shards = {r: x.new_zeros(shape).scatter_add(i, ids.shards[r], x) for r, x in src.shards.items()}
+    return ShardedTensor(layout, shards, is_weight=src.is_weight)
