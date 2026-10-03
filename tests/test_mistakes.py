@@ -220,6 +220,34 @@ def test_moe_combine_requires_the_return_all_to_all():
         check("09a", wrong)
 
 
+def test_expert_tensor_parallel_backward_slices_replicated_dy():
+    wrong = patched_solution(
+        "11b",
+        'dy = shard(dy, "T:ep d:tp")',
+        'dy = reduce_scatter(dy, "d", tp).expect("T:ep d:tp")',
+    )
+    with pytest.raises(PuzzleError, match="nothing to reduce"):
+        check("11b", wrong)
+
+
+def test_expert_tensor_parallel_router_choice_gradient_needs_a_tp_reduction():
+    wrong = patched_solution("11b", '        dweights = all_reduce(dweights, tp).expect("T:ep k")\n', "")
+    with pytest.raises(PuzzleError, match="partial sum over tp"):
+        check("11b", wrong)
+
+
+def test_expert_tensor_parallel_router_weight_gradient_reduces_over_ep():
+    wrong = patched_solution("11b", 'partial=ep), ep).expect("d E")', 'partial=ep), tp).expect("d E")')
+    with pytest.raises(PuzzleError, match="isn't a partial sum over tp"):
+        check("11b", wrong)
+
+
+def test_expert_tensor_parallel_return_bytes_use_the_local_hidden_width():
+    wrong = patched_solution("11a", '"2*E*C/ep*d/tp * (ep-1)/ep"', '"2*E*C/ep*d * (ep-1)/ep"')
+    with pytest.raises(PuzzleError, match=r"incorrect byte count for all_to_all\(ep\)"):
+        check("11a", wrong)
+
+
 def test_using_a_partial_result_as_a_replica():
     wrong = patched_solution("00b", '.expect("b s f", partial=tp)', '.expect("b s f")')
     with pytest.raises(PuzzleError, match="this is a partial sum over tp"):

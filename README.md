@@ -31,6 +31,8 @@ uv run check.py 9a
 uv run check.py 9b
 uv run check.py 10a
 uv run check.py 10b
+uv run check.py 11a
+uv run check.py 11b
 ```
 
 Start with `puzzles/p00a_layouts.py`. Replace the `TODO` blanks and run the checker again.
@@ -46,6 +48,8 @@ cross-entropy and its gradients while keeping the vocabulary logits split across
 combine FSDP with tensor parallelism on a two-dimensional mesh.
 `09a` and `09b` route tokens to experts with expert parallelism; `10a` and `10b` add
 selection bias, sigmoid routing weights, and a shared expert.
+`11a` and `11b` split each expert across tensor-parallel ranks and keep the return
+buffers narrow while moving them between expert ranks.
 `uv run check.py` checks all available exercises.
 
 ## Layouts

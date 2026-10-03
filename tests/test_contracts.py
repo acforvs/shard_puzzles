@@ -13,6 +13,7 @@ from solutions.p00c_data_parallel import Linear
 from solutions.p01a_mlp_tp import MLP
 from solutions.p02a_swiglu_tp_sp import SwiGLU
 from solutions.p05a_vocab_parallel_embedding import VocabParallelEmbedding
+from solutions.p11a_expert_tensor_parallel import ExpertTensorParallelMoE
 
 PUZZLES = discover()
 
@@ -341,3 +342,47 @@ def test_moe_extra_communication_fails_the_collective_limit(pid):
             continue  # no payload leaves a singleton group
         with pytest.raises(WrongResult, match="forward uses 3 payload collectives; at most 2"):
             run(puzzle.spec, ExtraCollective, config)
+
+
+@pytest.mark.parametrize(
+    "w1_layout,w2_layout,missing_group",
+    [("E:ep d f", "E:ep f d", "tp"), ("E d f:tp", "E f:tp d", "ep")],
+)
+def test_expert_tensor_parallelism_requires_both_weight_shards(w1_layout, w2_layout, missing_group):
+    class OneAxis(Module):
+        def on_init(self, p):
+            self.Wr = p.Wr
+            self.W1 = shard(p.W1, w1_layout)
+            self.W2 = shard(p.W2, w2_layout)
+
+    puzzle = PUZZLES["11a"]
+    for config in puzzle.spec.configs:
+        if config[missing_group] == 1:
+            continue
+        with pytest.raises(WrongResult, match="stored weights.*storage budget"):
+            run(puzzle.spec, OneAxis, config)
+
+
+def test_full_width_expert_return_exceeds_the_communication_budget():
+    class FullWidthReturn(ExpertTensorParallelMoE):
+        def forward(self, x):
+            top, ids = topk((x @ self.Wr).expect("T:ep E"), "k")
+            weights = softmax(top, dim=-1)
+            buffers, plan = dispatch(x, ids, "E", "C")
+            buffers = all_to_all(buffers.expect("E C:ep d"), "C", "E", ep).expect(
+                "E:ep C d", bytes="2*E*C/ep*d*(ep-1)/ep"
+            )
+            h = (buffers @ self.W1).expect("E:ep C f:tp")
+            y = (gelu(h) @ self.W2).expect("E:ep C d", partial=tp)
+            y = all_reduce(y, tp).expect("E:ep C d", bytes="4*E*C*d/ep*(tp-1)/tp")
+            y = all_to_all(y, "E", "C", ep).expect("E C:ep d", bytes="2*E*C/ep*d*(ep-1)/ep")
+            choices = combine(y, plan).expect("T:ep k d")
+            return sum(choices * weights.view("T:ep k 1"), "k").expect("T:ep d")
+
+    puzzle = PUZZLES["11a"]
+    for config in puzzle.spec.configs:
+        if config["tp"] == 1:
+            continue
+        run(puzzle.spec.replace(max_comm_bytes=None), FullWidthReturn, config)
+        with pytest.raises(WrongResult, match="moved .*the budget is"):
+            run(puzzle.spec, FullWidthReturn, config)
