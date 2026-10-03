@@ -1,7 +1,7 @@
 """Generate puzzle stubs and optional scaffolds from reference solution code.
 
-A stub replaces each TODO region with named blanks. A scaffold also shows the layout
-for each blank, while keeping byte answers hidden.
+A stub replaces each TODO region with named blanks; a quiz blanks the layout checkpoints.
+A scaffold shows the layouts, while keeping byte answers hidden.
 """
 
 from __future__ import annotations
@@ -60,6 +60,8 @@ def layouts_by_line(puzzle: Puzzle) -> dict[int, str]:
 
 def scaffold(puzzle: Puzzle) -> str:
     """The stub, but each blank states the layout it must produce (byte answers hidden)."""
+    if puzzle.is_quiz:
+        return "# Layout checkpoints for the quiz; fill in the byte counts.\n" + quiz(puzzle, show_layouts=True)
     layouts = layouts_by_line(puzzle)
 
     def blank(statement: ast.stmt, source: str) -> str | None:
@@ -76,7 +78,9 @@ def scaffold(puzzle: Puzzle) -> str:
 
 
 def stub(puzzle: Puzzle) -> str:
-    """The solution with each `# TODO: prompt` ... `# END TODO` region replaced by `name = TODO` lines."""
+    """A TODO stub for an exercise, or layout/byte blanks for a quiz."""
+    if puzzle.is_quiz:
+        return quiz(puzzle)
 
     def blank(statement: ast.stmt, source: str) -> str | None:
         target = assigned_names(statement, source)
@@ -103,3 +107,28 @@ def fill_todo_regions(puzzle: Puzzle, blank: Callable[[ast.stmt, str], str | Non
             seen.add(text)  # one blank per name, even if the solution assigns it twice
             out.append(indent + text)
     return "\n".join(out)
+
+
+def quiz(puzzle: Puzzle, *, show_layouts: bool = False) -> str:
+    """Blank computational .expect arguments, retaining given input/helper layouts.
+
+    Scaffolding can show the layouts; byte answers remain blank in both forms.
+    """
+    source, cls = solution_source(puzzle)
+    answers = []
+    for node in ast.walk(cls):
+        if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute) and node.func.attr == "expect"):
+            continue
+        blank_layout = not show_layouts and not isinstance(node.func.value, ast.Name)
+        if blank_layout:
+            answers.extend(node.args)
+        answers.extend(keyword.value for keyword in node.keywords if keyword.arg == "bytes" or blank_layout)
+
+    offsets = [0]
+    for line in source.splitlines(keepends=True):
+        offsets.append(offsets[-1] + len(line))
+    for node in sorted(answers, key=lambda n: (n.lineno, n.col_offset), reverse=True):
+        start = offsets[node.lineno - 1] + node.col_offset
+        end = offsets[(node.end_lineno or node.lineno) - 1] + (node.end_col_offset or node.col_offset)
+        source = source[:start] + '"???"' + source[end:]
+    return source

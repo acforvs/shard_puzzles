@@ -3,7 +3,8 @@
     uv run python tools/build_stubs.py          # rewrite puzzle files
     uv run python tools/build_stubs.py --check  # fail if any puzzle file is out of date (used by the tests)
 
-Each `# TODO: ...` region in the solution becomes `name = TODO` lines.
+Each `# TODO: ...` region becomes `name = TODO` lines. Quiz files keep the code and
+replace layout and byte answers with "???".
 """
 
 from __future__ import annotations

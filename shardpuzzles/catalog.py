@@ -21,6 +21,10 @@ class Puzzle:
     name: str  # "p00a_layouts", the module name in puzzles/ and solutions/
 
     @property
+    def is_quiz(self) -> bool:
+        return self.id.endswith("q")
+
+    @property
     def path(self) -> str:
         return os.path.join(ROOT, "puzzles", f"{self.name}.py")
 

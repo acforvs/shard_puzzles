@@ -35,6 +35,7 @@ uv run check.py 11a
 uv run check.py 11b
 uv run check.py 12a
 uv run check.py 12b
+uv run check.py 12q
 ```
 
 Start with `puzzles/p00a_layouts.py`. Replace the `TODO` blanks and run the checker again.
@@ -54,6 +55,7 @@ selection bias, sigmoid routing weights, and a shared expert.
 buffers narrow while moving them between expert ranks.
 `12a` and `12b` compress tokens before dispatch, run routed experts in the latent space,
 and expand the combined output while keeping a full-width shared expert.
+`12q` combines the latent and shared experts with sigmoid routing in a quiz on layouts and communication.
 `uv run check.py` checks all available exercises.
 
 ## Layouts
@@ -106,6 +108,7 @@ uv run check.py 0b --solution
 
 Hints are progressive. A scaffold adds layout checkpoints to the blanks, while keeping byte answers
 hidden. `--solution` runs the worked answer from `solutions/`. Add `-q` to omit the trace.
+In a quiz, the operations are given: fill in the `"???"` layouts and byte counts.
 
 You can stop an attempt with `raise NotImplementedError` to inspect the trace so far.
 
