@@ -14,6 +14,7 @@ from solutions.p01a_mlp_tp import MLP
 from solutions.p02a_swiglu_tp_sp import SwiGLU
 from solutions.p05a_vocab_parallel_embedding import VocabParallelEmbedding
 from solutions.p11a_expert_tensor_parallel import ExpertTensorParallelMoE
+from solutions.p12a_latent_moe import LatentMoE
 
 PUZZLES = discover()
 
@@ -307,7 +308,7 @@ def test_fsdp_forward_accepts_other_weight_shard_dimensions():
         run(puzzle.spec, ColumnShards, config)
 
 
-@pytest.mark.parametrize("pid", ["09a", "10a"])
+@pytest.mark.parametrize("pid", ["09a", "10a", "12a"])
 def test_replicated_experts_fail_the_storage_budget(pid):
     puzzle = PUZZLES[pid]
     base = puzzle.module_class(solution=True)
@@ -386,3 +387,31 @@ def test_full_width_expert_return_exceeds_the_communication_budget():
         run(puzzle.spec.replace(max_comm_bytes=None), FullWidthReturn, config)
         with pytest.raises(WrongResult, match="moved .*the budget is"):
             run(puzzle.spec, FullWidthReturn, config)
+
+
+def test_latent_moe_compresses_before_dispatch():
+    class CompressAfterDispatch(LatentMoE):
+        def forward(self, x):
+            top, ids = topk((x @ self.Wr).expect("T:ep E"), "k")
+            weights = softmax(top, dim=-1)
+            buffers, plan = dispatch(x, ids, "E", "C")
+            buffers = all_to_all(buffers.expect("E C:ep d"), "C", "E", ep).expect(
+                "E:ep C d", bytes="2*E*C/ep*d*(ep-1)/ep"
+            )
+            buffers = (buffers @ self.Wdown).expect("E:ep C l")
+            h = (buffers @ self.W1).expect("E:ep C f")
+            y = (gelu(h) @ self.W2).expect("E:ep C l")
+            y = all_to_all(y, "E", "C", ep).expect("E C:ep l", bytes="2*E*C/ep*l*(ep-1)/ep")
+            choices = combine(y, plan).expect("T:ep k l")
+            latent = sum(choices * weights.view("T:ep k 1"), "k").expect("T:ep l")
+            routed = (latent @ self.Wup).expect("T:ep d")
+            hs = (x @ self.Ws1).expect("T:ep fs")
+            return routed + (gelu(hs) @ self.Ws2).expect("T:ep d")
+
+    puzzle = PUZZLES["12a"]
+    for config in puzzle.spec.configs:
+        if config["ep"] == 1:
+            continue
+        run(puzzle.spec.replace(max_comm_bytes=None), CompressAfterDispatch, config)
+        with pytest.raises(WrongResult, match="moved .*the budget is"):
+            run(puzzle.spec, CompressAfterDispatch, config)

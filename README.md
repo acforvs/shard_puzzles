@@ -33,6 +33,8 @@ uv run check.py 10a
 uv run check.py 10b
 uv run check.py 11a
 uv run check.py 11b
+uv run check.py 12a
+uv run check.py 12b
 ```
 
 Start with `puzzles/p00a_layouts.py`. Replace the `TODO` blanks and run the checker again.
@@ -50,6 +52,8 @@ combine FSDP with tensor parallelism on a two-dimensional mesh.
 selection bias, sigmoid routing weights, and a shared expert.
 `11a` and `11b` split each expert across tensor-parallel ranks and keep the return
 buffers narrow while moving them between expert ranks.
+`12a` and `12b` compress tokens before dispatch, run routed experts in the latent space,
+and expand the combined output while keeping a full-width shared expert.
 `uv run check.py` checks all available exercises.
 
 ## Layouts

@@ -248,6 +248,33 @@ def test_expert_tensor_parallel_return_bytes_use_the_local_hidden_width():
         check("11a", wrong)
 
 
+@pytest.mark.parametrize(
+    "gradient,contraction,layout",
+    [("Wup", '"t l, t d -> l d", self.routed_l, dy', "l d"), ("Wdown", '"t d, t l -> d l", self.x, dz', "d l")],
+)
+def test_latent_projection_weight_gradients_need_a_reduction(gradient, contraction, layout):
+    local = f'einsum({contraction}).expect("{layout}", partial=ep)'
+    wrong = patched_solution("12b", f'all_reduce({local}, ep).expect("{layout}")', local)
+    with pytest.raises(WrongResult, match=rf"grad '{gradient}' is .*partial\(ep\)"):
+        check("12b", wrong)
+
+
+def test_latent_moe_input_gradient_includes_the_router_path():
+    wrong = patched_solution(
+        "12b",
+        "dz @ self.Wdown.transpose(0, 1) + dlogits @ self.Wr.transpose(0, 1)",
+        "dz @ self.Wdown.transpose(0, 1)",
+    )
+    with pytest.raises(WrongResult, match="grad 'x'.*wrong numbers"):
+        check("12b", wrong)
+
+
+def test_latent_moe_dispatch_bytes_use_the_latent_width():
+    wrong = patched_solution("12a", '"2*E*C/ep*l * (ep-1)/ep"', '"2*E*C/ep*d * (ep-1)/ep"')
+    with pytest.raises(PuzzleError, match=r"incorrect byte count for all_to_all\(ep\)"):
+        check("12a", wrong)
+
+
 def test_using_a_partial_result_as_a_replica():
     wrong = patched_solution("00b", '.expect("b s f", partial=tp)', '.expect("b s f")')
     with pytest.raises(PuzzleError, match="this is a partial sum over tp"):
