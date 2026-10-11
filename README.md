@@ -9,58 +9,13 @@ on a simulated CPU mesh. No GPU or `torch.distributed` setup is needed.
 ```bash
 uv sync
 uv run check.py 0a
-uv run check.py 0b
-uv run check.py 0c
-uv run check.py 1a
-uv run check.py 1b
-uv run check.py 2a
-uv run check.py 2b
-uv run check.py 3a
-uv run check.py 3b
-uv run check.py 4a
-uv run check.py 4b
-uv run check.py 5a
-uv run check.py 5b
-uv run check.py 6a
-uv run check.py 6b
-uv run check.py 7a
-uv run check.py 7b
-uv run check.py 8a
-uv run check.py 8b
-uv run check.py 9a
-uv run check.py 9b
-uv run check.py 10a
-uv run check.py 10b
-uv run check.py 11a
-uv run check.py 11b
-uv run check.py 12a
-uv run check.py 12b
-uv run check.py 12q
-uv run check.py 13a
-uv run check.py 13b
 ```
 
-Start with `puzzles/p00a_layouts.py`. Replace the `TODO` blanks and run the checker again.
-The introductory exercises cover replicated and split tensors, partial sums, and a data-parallel
-linear layer with a manual backward pass. `01a` combines two linear projections into a tensor-parallel
-MLP, and `01b` works backward through it. `02a` and `02b` combine tensor and sequence parallelism
-in a SwiGLU MLP, covering both forward and backward passes.
-`03a` and `03b` apply those layouts to causal grouped-query attention; `04a` and `04b` fuse
-the QKV projections and work through the corresponding gradients.
-`05a` and `05b` split an embedding table by vocabulary rows; `06a` and `06b` compute
-cross-entropy and its gradients while keeping the vocabulary logits split across ranks.
-`07a` and `07b` gather sharded weights for FSDP and scatter their gradients; `08a` and `08b`
-combine FSDP with tensor parallelism on a two-dimensional mesh.
-`09a` and `09b` route tokens to experts with expert parallelism; `10a` and `10b` add
-selection bias, sigmoid routing weights, and a shared expert.
-`11a` and `11b` split each expert across tensor-parallel ranks and keep the return
-buffers narrow while moving them between expert ranks.
-`12a` and `12b` compress tokens before dispatch, run routed experts in the latent space,
-and expand the combined output while keeping a full-width shared expert.
-`12q` combines the latent and shared experts with sigmoid routing in a quiz on layouts and communication.
-`13a` and `13b` use Ulysses all-to-all exchanges to switch between sequence and head splits
-for attention. Here `cp` names the mesh group that partitions the sequence; the weights are replicated.
-`uv run check.py` checks all available exercises.
+Open [puzzles/p00a_layouts.py](puzzles/p00a_layouts.py), replace the `TODO` blanks, and run the
+checker again. Continue through the numbered files in `puzzles/`.
+
+Run `uv run check.py 1` to check a whole section, or `uv run check.py` to check every exercise.
+Hints, scaffolds, and worked answers are described under [Getting help](#getting-help).
 
 ## Layouts
 
