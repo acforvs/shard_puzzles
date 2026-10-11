@@ -275,6 +275,55 @@ def test_latent_moe_dispatch_bytes_use_the_latent_width():
         check("12a", wrong)
 
 
+@pytest.mark.parametrize(
+    "contraction,layout,gradient",
+    [
+        ('"b s e, b s d -> e d", self.o, dy', "h*hd d", "Wo"),
+        ('"b s d, b s e -> d e", self.x, dq', "d h*hd", "Wq"),
+    ],
+)
+def test_ulysses_replicated_weight_gradients_need_a_context_reduction(contraction, layout, gradient):
+    local = f'einsum({contraction}).expect("{layout}", partial=cp)'
+    wrong = patched_solution("13b", f'all_reduce({local}, cp).expect("{layout}")', local)
+    with pytest.raises(WrongResult, match=rf"grad '{gradient}' is .*partial\(cp\)"):
+        check("13b", wrong)
+
+
+def test_ulysses_returns_the_attention_output_to_sequence_splits():
+    wrong = patched_solution(
+        "13a",
+        '        o = all_to_all(o.transpose(1, 2), "h", "s", cp).expect('
+        '"b s:cp h hd", bytes="2*b*s*h/cp*hd * (cp-1)/cp")\n',
+        "        o = o.transpose(1, 2)\n",
+    )
+    with pytest.raises(PuzzleError, match="can't add, drop or move sharding"):
+        check("13a", wrong)
+
+
+def test_ulysses_unrepeats_kv_gradients_before_sending_them():
+    late = patched_solution(
+        "13b",
+        """        dk = repeat_interleave_backward(dk, "h/hkv", dim=1)  # hkv heads are cheaper to send than h
+        dv = repeat_interleave_backward(dv, "h/hkv", dim=1)
+        dq = all_to_all(dq.transpose(1, 2), "h", "s", cp).expect("b s:cp h hd", bytes="2*b*s*h/cp*hd * (cp-1)/cp")
+        dk = all_to_all(dk.transpose(1, 2), "hkv", "s", cp).expect("b s:cp hkv hd", bytes="2*b*s*hkv/cp*hd * (cp-1)/cp")
+        dv = all_to_all(dv.transpose(1, 2), "hkv", "s", cp).expect("b s:cp hkv hd", bytes="2*b*s*hkv/cp*hd * (cp-1)/cp")
+        """.rstrip(),
+        """        dq = all_to_all(dq.transpose(1, 2), "h", "s", cp).expect("b s:cp h hd")
+        dk = all_to_all(dk.transpose(1, 2), "h", "s", cp).expect("b s:cp h hd")
+        dv = all_to_all(dv.transpose(1, 2), "h", "s", cp).expect("b s:cp h hd")
+        dk = repeat_interleave_backward(dk, "h/hkv", dim=2)
+        dv = repeat_interleave_backward(dv, "h/hkv", dim=2)""",
+    )
+    puzzle = PUZZLES["13b"]
+    for config in puzzle.spec.configs:
+        if config["cp"] == 1 or config["h"] == config["hkv"]:
+            continue
+        run(puzzle.spec.replace(max_comm_bytes=None), late, config)
+        with pytest.raises(WrongResult, match="moved .*the budget is"):
+            run(puzzle.spec, late, config)
+
+
 def test_using_a_partial_result_as_a_replica():
     wrong = patched_solution("00b", '.expect("b s f", partial=tp)', '.expect("b s f")')
     with pytest.raises(PuzzleError, match="this is a partial sum over tp"):

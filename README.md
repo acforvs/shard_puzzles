@@ -36,6 +36,8 @@ uv run check.py 11b
 uv run check.py 12a
 uv run check.py 12b
 uv run check.py 12q
+uv run check.py 13a
+uv run check.py 13b
 ```
 
 Start with `puzzles/p00a_layouts.py`. Replace the `TODO` blanks and run the checker again.
@@ -56,6 +58,8 @@ buffers narrow while moving them between expert ranks.
 `12a` and `12b` compress tokens before dispatch, run routed experts in the latent space,
 and expand the combined output while keeping a full-width shared expert.
 `12q` combines the latent and shared experts with sigmoid routing in a quiz on layouts and communication.
+`13a` and `13b` use Ulysses all-to-all exchanges to switch between sequence and head splits
+for attention. Here `cp` names the mesh group that partitions the sequence; the weights are replicated.
 `uv run check.py` checks all available exercises.
 
 ## Layouts
@@ -84,7 +88,8 @@ The result of a matmul, `einsum`, reduction or collective is pending until you s
 result = operation(...).expect("b s d")
 ```
 
-For a partial sum, add `partial=tp`, `partial=dp`, or `partial=ep`. For a collective, the exercise may also require
+For a partial sum, add a mesh group such as `partial=tp`, `partial=dp`, `partial=ep`, or `partial=cp`.
+For a collective, the exercise may also require
 `bytes="..."`. The engine derives the layout independently and checks your statement. Elementwise
 operations preserve the layout and do not need another `.expect(...)`.
 

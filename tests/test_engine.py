@@ -135,6 +135,22 @@ def test_all_to_all_swaps_which_dim_is_split(mesh):
     assert torch.equal(to_global(y), to_global(x))
 
 
+def test_context_parallel_all_to_all_preserves_other_mesh_slices(mesh):
+    mesh(b=1, s=6, h=6, hd=4, tp=2, cp=3)
+    x = mesh.tensor("b s:cp h hd:tp")
+    y = all_to_all(x, "s", "h", cp).expect("b s h:cp hd:tp")
+    assert torch.equal(to_global(y), to_global(x))
+    returned = all_to_all(y, "h", "s", cp).expect("b s:cp h hd:tp")
+    assert all(torch.equal(returned.shards[r], x.shards[r]) for r in mesh.sim.ranks)
+
+
+def test_all_to_all_reports_heads_that_cannot_be_divided_between_ranks(mesh):
+    mesh(b=1, s=4, hkv=1, hd=2, cp=2)
+    with pytest.raises(PuzzleError, match="isn't divisible by cp"):
+        all_to_all(mesh.tensor("b s:cp hkv hd"), "s", "hkv", cp)
+    assert not mesh.sim.comms
+
+
 def test_einsum_sum_over_split_dim_is_partial(mesh):
     mesh(b=4, d=3, f=2, dp=2)
     x, dy = mesh.tensor("b:dp d"), mesh.tensor("b:dp f")

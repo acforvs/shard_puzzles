@@ -125,11 +125,12 @@ def all_to_all(t: ShardedTensor, gather_dim: DimRef, scatter_dim: DimRef, group:
         raise PuzzleError(f"all_to_all: scatter_dim {t.dims[si]} is already split")
     if group in t.partial:
         raise PuzzleError(f"all_to_all: [{t.spec}] is a partial sum over {group}")
+    layout = t.layout.with_dim(gi, Dim(t.dims[gi].size)).with_dim(si, Dim(t.dims[si].size, group))
+    layout.local_shape()  # validate divisibility before attempting to move chunks
     shards = {}
     for members in current().communicators(group):
         # the k-th chunk (along scatter_dim) of every sender goes to the k-th receiver
         chunks = {r: torch.chunk(t.shards[r], len(members), dim=si) for r in members}
         for k, receiver in enumerate(members):
             shards[receiver] = torch.cat([chunks[sender][k] for sender in members], dim=gi).contiguous()
-    layout = t.layout.with_dim(gi, Dim(t.dims[gi].size)).with_dim(si, Dim(t.dims[si].size, group))
     return finish("all_to_all", group, layout, shards, sent(t.layout) * ring_fraction(group), is_weight=t.is_weight)

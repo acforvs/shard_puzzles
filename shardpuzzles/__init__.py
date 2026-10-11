@@ -36,11 +36,11 @@ from .ops import (
     topk,
 )
 from .show import show
-from .simulation import dp, ep, tp
+from .simulation import cp, dp, ep, tp
 from .tensor import TODO, Pending, ShardedTensor
 
 __all__ = [
-    "tp", "dp", "ep", "Module", "ShardedTensor", "Pending", "TODO", "Spec", "Weight", "Ids",
+    "tp", "dp", "ep", "cp", "Module", "ShardedTensor", "Pending", "TODO", "Spec", "Weight", "Ids",
     "shard", "all_gather", "reduce_scatter", "all_reduce", "all_to_all",
     "einsum", "gelu", "silu", "relu", "sigmoid", "exp", "log", "softmax", "sum", "amax",
     "size", "full", "show", "cat", "repeat_interleave", "causal_mask",
