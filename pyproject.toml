@@ -9,7 +9,6 @@ dependencies = ["torch>=2.2", "sympy>=1.12", "numpy"]
 dev = ["pytest"]
 
 [tool.uv]
-exclude-newer = "2026-07-30T21:58:28Z"
 package = false
 
 [tool.uv.sources]
