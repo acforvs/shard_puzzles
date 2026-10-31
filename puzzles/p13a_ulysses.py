@@ -7,7 +7,7 @@ Re-shard q, k and v from "split by sequence" to "split by heads".
 Every rank then runs ordinary full-sequence attention on h/cp heads, and you re-shard the result
 back. all_to_all(t, gather_dim, scatter_dim, group) makes gather_dim whole and splits scatter_dim.
 
-Compare the per-rank bytes with gathering the full sequence of K/V on every rank as cp grows.
+Compare the per-rank bytes with 14a's K/V all-gathers as cp grows.
 Why does this head partition stop scaling once cp > hkv?
 
 Read: DeepSpeed-Ulysses (arXiv 2309.14509) Sec. 3.

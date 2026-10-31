@@ -57,9 +57,9 @@ def test_cat_requires_nonempty_compatible_layouts(mesh):
         cat([mesh.tensor("b h:tp hd"), mesh.tensor("h:tp hd")], dim=1)
 
 
-@pytest.mark.parametrize("spec", ["s s", "s:tp s"])
+@pytest.mark.parametrize("spec", ["s s", "s:tp s", "s:cp s"])
 def test_causal_mask_uses_global_query_positions(mesh, spec):
-    mesh(s=6, tp=2)
+    mesh(s=6, tp=2, cp=3)
     mask = causal_mask(spec)
     expected = torch.tensor([[0 if k <= q else float("-inf") for k in range(6)] for q in range(6)])
     assert torch.equal(to_global(mask), expected)

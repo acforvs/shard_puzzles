@@ -324,6 +324,40 @@ def test_ulysses_unrepeats_kv_gradients_before_sending_them():
             run(puzzle.spec, late, config)
 
 
+@pytest.mark.parametrize("tensor,message", [("k", "cannot split two dimensions"), ("v", "contracted dim")])
+def test_context_parallel_attention_needs_both_kv_gathers(tensor, message):
+    line = f'        {tensor} = all_gather({tensor}, "s", cp).expect("b hkv s hd", bytes="2*b*hkv*s*hd * (cp-1)/cp")\n'
+    wrong = patched_solution("14a", line, "")
+    with pytest.raises(PuzzleError, match=message):
+        check("14a", wrong)
+
+
+def test_context_parallel_attention_mask_matches_local_queries():
+    wrong = patched_solution("14a", 'causal_mask("s:cp s")', 'causal_mask("s s")')
+    with pytest.raises(PuzzleError, match="don't line up"):
+        check("14a", wrong)
+
+
+def test_context_parallel_attention_gathers_kv_before_repeating_heads():
+    repeated = patched_solution(
+        "14a",
+        """        k = all_gather(k, "s", cp).expect("b hkv s hd", bytes="2*b*hkv*s*hd * (cp-1)/cp")
+        v = all_gather(v, "s", cp).expect("b hkv s hd", bytes="2*b*hkv*s*hd * (cp-1)/cp")
+        # END TODO
+        k, v = repeat_interleave(k, "h/hkv", dim=1), repeat_interleave(v, "h/hkv", dim=1)""",
+        """        k, v = repeat_interleave(k, "h/hkv", dim=1), repeat_interleave(v, "h/hkv", dim=1)
+        k = all_gather(k, "s", cp).expect("b h s hd", bytes="2*b*h*s*hd*(cp-1)/cp")
+        v = all_gather(v, "s", cp).expect("b h s hd", bytes="2*b*h*s*hd*(cp-1)/cp")""",
+    )
+    puzzle = PUZZLES["14a"]
+    for config in puzzle.spec.configs:
+        if config["cp"] == 1 or config["h"] == config["hkv"]:
+            continue
+        run(puzzle.spec.replace(max_comm_bytes=None), repeated, config)
+        with pytest.raises(WrongResult, match="moved .*the budget is"):
+            run(puzzle.spec, repeated, config)
+
+
 def test_using_a_partial_result_as_a_replica():
     wrong = patched_solution("00b", '.expect("b s f", partial=tp)', '.expect("b s f")')
     with pytest.raises(PuzzleError, match="this is a partial sum over tp"):
